@@ -21,7 +21,7 @@ type Lang struct {
 
 type Data struct {
 	Data        map[string]interface{}
-	pluralCount int
+	PluralCount int
 }
 
 var (
@@ -148,7 +148,7 @@ func TData(defaultLocalized string, id string, data *Data) (localize string) {
 	var pluralCount int
 	if data != nil {
 		localizeData = data.Data
-		pluralCount = data.pluralCount
+		pluralCount = data.PluralCount
 	} else {
 		pluralCount = 0
 	}
