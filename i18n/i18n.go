@@ -7,6 +7,7 @@ import (
 	"os"
 	path "path/filepath"
 	"regexp"
+	"sync/atomic"
 
 	"github.com/BurntSushi/toml"
 	goI18n "github.com/nicksnyder/go-i18n/v2/i18n"
@@ -23,6 +24,18 @@ type Data struct {
 	Data        map[string]interface{}
 	PluralCount int
 }
+
+type CallbackData struct {
+	Callback func(params ...interface{})
+
+	CallbackId uint32
+	NotOrigin  bool
+}
+
+var (
+	callbackDataMap       map[uint32]*CallbackData
+	currentCallbackDataId uint32
+)
 
 var (
 	Localizer *goI18n.Localizer
@@ -155,6 +168,38 @@ func TData(defaultLocalized string, id string, data *Data) (localize string) {
 	return Localize(defaultLocalized, id, localizeData, pluralCount)
 }
 
+func TCallback(id string, callback func(localized string)) {
+	callback(TC("", id))
+
+	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
+		TCallback(id, callback)
+	}, NotOrigin: true})
+}
+
+func TCCallback(defaultLocalized string, id string, callback func(localized string)) {
+	callback(Localize(defaultLocalized, id, nil, 0))
+
+	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
+		TCCallback(defaultLocalized, id, callback)
+	}, NotOrigin: true})
+}
+
+func TDataCallback(defaultLocalized string, id string, data *Data, callback func(localized string)) {
+	var localizeData map[string]interface{}
+	var pluralCount int
+	if data != nil {
+		localizeData = data.Data
+		pluralCount = data.PluralCount
+	} else {
+		pluralCount = 0
+	}
+	callback(Localize(defaultLocalized, id, localizeData, pluralCount))
+
+	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
+		TDataCallback(defaultLocalized, id, data, callback)
+	}, NotOrigin: true})
+}
+
 func Localize(defaultLocalized string, id string, data map[string]interface{}, pluralCount int) (localized string) {
 	localized, err := Localizer.Localize(&goI18n.LocalizeConfig{
 		DefaultMessage: &goI18n.Message{
@@ -187,8 +232,18 @@ func SwitchLanguage(lang *Lang) {
 	}
 }
 
-func AddSwitchCallback(callback func()) {
-	SwitchCallbacks = append(SwitchCallbacks, callback)
+func AddSwitchCallback(data *CallbackData) {
+	if _, exist := callbackDataMap[data.CallbackId]; exist {
+		LogErrorFunc("[i18n] cannot add duplicated callback")
+		return
+	}
+	//SwitchCallbacks = append(SwitchCallbacks, callback)
+	getNewCallbackDataId()
+	callbackDataMap[currentCallbackDataId] = data
+}
+
+func getNewCallbackDataId() uint32 {
+	return atomic.AddUint32(&currentCallbackDataId, 1)
 }
 
 func readLangLabel(fileName string) []string {
