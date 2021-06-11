@@ -7,6 +7,7 @@ import (
 	"os"
 	path "path/filepath"
 	"regexp"
+	"strings"
 	"sync/atomic"
 
 	"github.com/BurntSushi/toml"
@@ -14,22 +15,42 @@ import (
 	"golang.org/x/text/language"
 )
 
+// Lang 语言
 type Lang struct {
-	Name     string
-	Tag      language.Tag
+	// Name 语言名称
+	Name string
+	// Tag 语言标记
+	Tag language.Tag
+	// fileName 语言包文件名
 	fileName string
 }
 
+// Data i18n数据
 type Data struct {
-	Data        map[string]interface{}
+	// Data 变量map
+	Data map[string]interface{}
+	// PluralCount 复数
 	PluralCount int
 }
 
+// CallbackData 回调数据
 type CallbackData struct {
 	Callback func(params ...interface{})
 
 	CallbackId uint32
 	NotOrigin  bool
+}
+
+// I18nConfig i18n配置
+type I18nConfig struct {
+	// Id
+	Id string
+	// Format 可变格式
+	Format string
+	// Data i18n数据
+	Data *Data
+	// CallbackData 回调数据
+	//CallbackData    CallbackData
 }
 
 var (
@@ -66,15 +87,18 @@ func init() {
 	callbackDataMap = make(map[uint32]*CallbackData)
 }
 
+// SetDefaultLang 设置默认语言
 func SetDefaultLang(lang Lang) Lang {
 	DefaultLang = &lang
 	return lang
 }
 
+// InitI18n 初始化 (语言, Info日志方法, Error日志方法)
 func InitI18n(lang *Lang, logInfoFunc func(format string, v ...interface{}), logErrorFunc func(format string, v ...interface{})) {
 	InitI18nWithConfig(lang, logInfoFunc, logErrorFunc, "", nil, "")
 }
 
+// InitI18nWithConfig 初始化 (语言, Info日志方法, Error日志方法, 语言包格式名, 语言包解码方法, 语言包路径模式)
 func InitI18nWithConfig(lang *Lang, logInfoFunc func(format string, v ...interface{}), logErrorFunc func(format string, v ...interface{}),
 	format string, unmarshalFunc goI18n.UnmarshalFunc, langFilesPattern string) {
 	if logInfoFunc == nil {
@@ -148,15 +172,41 @@ func initI18n(lang *Lang, format string, unmarshalFunc goI18n.UnmarshalFunc, lan
 	LogInfoFunc("[i18n] InitI18n finished")
 }
 
+// GTF GetI18nFormatted别名 获取指定Id的本地化文本 (i18n配置)
+func GTF(i18nConfig *I18nConfig) (formatted string) {
+	return GetI18nFormatted(i18nConfig)
+}
+
+// GetI18nFormatted 获取指定Id的本地化文本 (i18n配置)
+func GetI18nFormatted(i18nConfig *I18nConfig) (formatted string) {
+	formatted = TData(i18nConfig.Id, i18nConfig.Data)
+	if len(i18nConfig.Format) > 0 {
+		if strings.Contains(i18nConfig.Format, "%s") {
+			formatted = fmt.Sprintf(i18nConfig.Format, formatted)
+		} else {
+			formatted += i18nConfig.Format
+		}
+	}
+	return
+}
+
+// T 获取指定Id的本地化文本 (默认文本)
 func T(id string) (localize string) {
 	return TC("", id)
 }
 
+// TC 获取指定Id的本地化文本，未找到则使用默认文本 (默认文本, id)
 func TC(defaultLocalized string, id string) (localize string) {
 	return Localize(defaultLocalized, id, nil, 0)
 }
 
-func TData(defaultLocalized string, id string, data *Data) (localize string) {
+// TData 获取指定Id的本地化文本，使用i18n数据 (id, i18n数据)
+func TData(id string, data *Data) (localize string) {
+	return TCData("", id, data)
+}
+
+// TCData 获取指定Id的本地化文本，使用i18n数据，未找到则使用默认文本 (默认文本, id, i18n数据)
+func TCData(defaultLocalized string, id string, data *Data) (localize string) {
 	var localizeData map[string]interface{}
 	var pluralCount int
 	if data != nil {
@@ -168,23 +218,23 @@ func TData(defaultLocalized string, id string, data *Data) (localize string) {
 	return Localize(defaultLocalized, id, localizeData, pluralCount)
 }
 
+// TCallback 添加切换语言自动回调 (id, 回调(本地化文本))
 func TCallback(id string, callback func(localized string)) {
-	callback(TC("", id))
-
-	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
-		TCallback(id, callback)
-	}, NotOrigin: true})
+	TDataCallback(id, nil, callback)
 }
 
+// TCCallback 添加切换语言自动回调，未找到则使用默认文本 (默认值, id, 回调(本地化文本))
 func TCCallback(defaultLocalized string, id string, callback func(localized string)) {
-	callback(Localize(defaultLocalized, id, nil, 0))
-
-	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
-		TCCallback(defaultLocalized, id, callback)
-	}, NotOrigin: true})
+	TCDataCallback(defaultLocalized, id, nil, callback)
 }
 
-func TDataCallback(defaultLocalized string, id string, data *Data, callback func(localized string)) {
+// TDataCallback 添加切换语言自动回调，使用i18n数据 (id, i18n数据, 回调(本地化文本))
+func TDataCallback(id string, data *Data, callback func(localized string)) {
+	TCDataCallback("", id, data, callback)
+}
+
+// TCDataCallback 添加切换语言自动回调，使用i18n数据，未找到则使用默认文本 (默认值, id, i18n数据, 回调(本地化文本))
+func TCDataCallback(defaultLocalized string, id string, data *Data, callback func(localized string)) {
 	var localizeData map[string]interface{}
 	var pluralCount int
 	if data != nil {
@@ -196,10 +246,11 @@ func TDataCallback(defaultLocalized string, id string, data *Data, callback func
 	callback(Localize(defaultLocalized, id, localizeData, pluralCount))
 
 	AddSwitchCallback(&CallbackData{Callback: func(params ...interface{}) {
-		TDataCallback(defaultLocalized, id, data, callback)
+		TCDataCallback(defaultLocalized, id, data, callback)
 	}, NotOrigin: true})
 }
 
+// Localize *获取本地化文本，使用变量map和复数，未找到则使用默认文本 (默认值, id, 变量map, 复数)
 func Localize(defaultLocalized string, id string, data map[string]interface{}, pluralCount int) (localized string) {
 	localized, err := Localizer.Localize(&goI18n.LocalizeConfig{
 		DefaultMessage: &goI18n.Message{
@@ -215,6 +266,7 @@ func Localize(defaultLocalized string, id string, data map[string]interface{}, p
 	return localized
 }
 
+// SwitchLanguage 切换语言 (语言)
 func SwitchLanguage(lang *Lang) {
 	langName := fmt.Sprintf("%s (%s)", lang.Name, lang.Tag.String())
 	_, err := bundle.LoadMessageFile(lang.fileName)
@@ -232,11 +284,13 @@ func SwitchLanguage(lang *Lang) {
 	}
 }
 
+// AddSwitchCallbackDo 添加切换语言自动回调，并立即执行回调 (回调数据)
 func AddSwitchCallbackDo(data *CallbackData) {
 	go AddSwitchCallback(data)
 	data.Callback()
 }
 
+// AddSwitchCallback 添加切换语言自动回调 (回调数据)
 func AddSwitchCallback(data *CallbackData) {
 	if data, exist := callbackDataMap[data.CallbackId]; exist {
 		if !data.NotOrigin {
@@ -244,7 +298,6 @@ func AddSwitchCallback(data *CallbackData) {
 		}
 		return
 	}
-	//SwitchCallbacks = append(SwitchCallbacks, callback)
 	getNewCallbackDataId()
 	callbackDataMap[currentCallbackDataId] = data
 }
