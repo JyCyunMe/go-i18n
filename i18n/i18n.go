@@ -44,9 +44,8 @@ var (
 	Language    *Lang
 	DefaultLang *Lang
 
-	LogInfoFunc     func(format string, v ...interface{})
-	LogErrorFunc    func(format string, v ...interface{})
-	SwitchCallbacks []func()
+	LogInfoFunc  func(format string, v ...interface{})
+	LogErrorFunc func(format string, v ...interface{})
 
 	bundle          *goI18n.Bundle
 	i18nLabelRegexp *regexp.Regexp
@@ -64,6 +63,7 @@ func init() {
 		LogErrorFunc("[i18n] init i18nLabelRegexp Compile error: %v", err)
 		panic(fmt.Errorf("[i18n] init i18nLabelRegexp Compile error: %v", err))
 	}
+	callbackDataMap = make(map[uint32]*CallbackData)
 }
 
 func SetDefaultLang(lang Lang) Lang {
@@ -225,16 +225,23 @@ func SwitchLanguage(lang *Lang) {
 	Localizer = goI18n.NewLocalizer(bundle, lang.Tag.String())
 	Language = lang
 	LogInfoFunc("[i18n] switched to new language: %s", langName)
-	for _, callback := range SwitchCallbacks {
-		if callback != nil {
-			callback()
+	for _, callbackData := range callbackDataMap {
+		if callbackData != nil && callbackData.Callback != nil {
+			callbackData.Callback()
 		}
 	}
 }
 
+func AddSwitchCallbackDo(data *CallbackData) {
+	go AddSwitchCallback(data)
+	data.Callback()
+}
+
 func AddSwitchCallback(data *CallbackData) {
-	if _, exist := callbackDataMap[data.CallbackId]; exist {
-		LogErrorFunc("[i18n] cannot add duplicated callback")
+	if data, exist := callbackDataMap[data.CallbackId]; exist {
+		if !data.NotOrigin {
+			LogErrorFunc("[i18n] cannot add duplicated callback")
+		}
 		return
 	}
 	//SwitchCallbacks = append(SwitchCallbacks, callback)
