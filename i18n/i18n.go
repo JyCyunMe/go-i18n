@@ -385,7 +385,7 @@ func PackageListByPatternFunc(options ...Option) ([]*Lang, error) {
 		logInfoFunc("[i18n] Found language: %s", langName)
 		languages = append(languages, lang)
 	}
-	logInfoFunc("[i18n] Loaded %d language(s)", len(languages))
+	logInfoFunc("[i18n] Found %d language(s)", len(languages))
 	return languages, nil
 }
 
