@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/Xuanwo/go-locale"
 	"log"
 	"os"
 	path "path/filepath"
@@ -16,102 +17,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-// Lang 语言
-type Lang struct {
-
-	// Name 语言名称
-	Name string
-
-	// Tag 语言标记
-	Tag language.Tag
-
-	// FileName 语言包文件名
-	FileName string
-
-	// Data 数据
-	Data *[]byte
-}
-
-// Data i18n数据
-type Data struct {
-
-	// Data 变量map
-	Data map[string]interface{}
-
-	// PluralCount 复数
-	PluralCount int
-}
-
-// CallbackData 回调数据
-type CallbackData struct {
-	// 回调方法
-	Callback func(params ...interface{})
-
-	// 回调Id
-	CallbackId uint32
-	// 非原始回调标识 (内部用)
-	notOrigin bool
-}
-
-// I18nConfig i18n配置
-type I18nConfig struct {
-
-	// Id
-	Id string
-
-	// Format 可变格式
-	Format string
-
-	// Data i18n数据
-	Data *Data
-
-	// CallbackData 回调数据
-	//CallbackData    CallbackData
-
-}
-
-// OptionType 选项类型
-type OptionType int8
-
-// Option 选项
-type Option struct {
-
-	// OptionType 选项类型
-	OptionType OptionType
-
-	// Data 选项数据
-	Data *interface{}
-
-	// Callback 选项回调
-	Callback func(v interface{}) interface{}
-}
-
-const (
-
-	// OptionType 选项类型枚举
-
-	// LogInfoFunc Info日志方法
-	LogInfoFunc OptionType = iota + 1
-
-	// LogErrorFunc Error日志方法
-	LogErrorFunc
-
-	// UnmarshalFunc 语言包解码方法
-	UnmarshalFunc
-
-	// PackageSuffix 语言包格式名
-	PackageSuffix
-
-	// PackagePath 语言包路径
-	PackagePath
-
-	// PackagePattern 语言包路径正则表达式
-	PackagePattern
-
-	// PackageListFunc 语言包列表方法
-	PackageListFunc
-)
-
 var (
 	callbackDataMap       map[uint32]*CallbackData
 	currentCallbackDataId uint32
@@ -119,27 +24,25 @@ var (
 
 var (
 	Localizer *goI18n.Localizer
-	// 语言集
+	// Languages 语言集
 	Languages []*Lang
 
-	// 当前语言
+	// Language 当前语言
 	Language *Lang
-	// 默认语言
+	// DefaultLang 默认语言
 	DefaultLang *Lang
 
-	logInfoFunc     func(format string, v ...interface{})
-	logErrorFunc    func(format string, v ...interface{})
-	unmarshalFunc   func(p []byte, v interface{}) error
+	// 日志信息等级打印方法
+	logInfoFunc func(format string, v ...interface{})
+	// 日志错误等级打印方法
+	logErrorFunc func(format string, v ...interface{})
+	// 解码方法
+	unmarshalFunc func(p []byte, v interface{}) error
+	// 语言包列举方法
 	packageListFunc func(options ...Option) ([]*Lang, error)
 
 	bundle          *goI18n.Bundle
 	i18nLabelRegexp *regexp.Regexp
-)
-
-var (
-	SimplifiedChinese  = Lang{Name: "zh-Hans", Tag: language.SimplifiedChinese}
-	TraditionalChinese = Lang{Name: "zh-Hans", Tag: language.TraditionalChinese}
-	English            = Lang{Name: "en", Tag: language.English}
 )
 
 func init() {
@@ -152,6 +55,7 @@ func init() {
 	callbackDataMap = make(map[uint32]*CallbackData)
 }
 
+// FullName 显示名
 func (l Lang) FullName() string {
 	if len(l.Name) > 0 {
 		return fmt.Sprintf("%s (%s)", l.Name, l.Tag.String())
@@ -203,7 +107,8 @@ func InitI18nWithAllFunc(lang *Lang,
 	logInfoFunc func(format string, v ...interface{}),
 	logErrorFunc func(format string, v ...interface{}),
 	unmarshalFunc func(p []byte, v interface{}) error,
-	packageListFunc func(options ...Option) ([]*Lang, error)) error {
+	packageListFunc func(options ...Option) ([]*Lang, error),
+	defaultUseSystemLanguage bool) error {
 	var lInfoFunc, lErrorFunc, unFunc, pListFunc func(v interface{}) interface{}
 	var options []Option
 	if logInfoFunc != nil {
@@ -244,6 +149,7 @@ func InitI18nWithAllFunc(lang *Lang,
 		}
 		options = append(options, NewOptionWithCallback(PackageListFunc, pListFunc))
 	}
+	options = append(options, NewOptionWithData(DefaultUseSystemLanguage, defaultUseSystemLanguage))
 	return InitI18nWithOptions(lang, options...)
 }
 
@@ -255,6 +161,7 @@ func InitI18nWithOptions(lang *Lang, options ...Option) error {
 	var pListFunc func(options ...Option) ([]*Lang, error)
 	format := "lang"
 	langFilesPattern := path.Join("./lang/*." + format)
+	defaultUseSystemLanguage := true
 
 	existPackagePath := false
 	for _, option := range options {
@@ -308,6 +215,9 @@ func InitI18nWithOptions(lang *Lang, options ...Option) error {
 				return
 			}
 			break
+		case DefaultUseSystemLanguage:
+			defaultUseSystemLanguage = (*option.Data).(bool)
+			break
 		default:
 			continue
 		}
@@ -322,8 +232,16 @@ func InitI18nWithOptions(lang *Lang, options ...Option) error {
 		}
 	}
 	if lang == nil {
-		lang = &English
-		logInfoFunc("[i18n] Not special language, default using %s (%s)", lang.Name, lang.Tag.String())
+		if defaultUseSystemLanguage {
+			tag, err := locale.Detect()
+			if err == nil {
+				lang = &Lang{Name: tag.String(), Tag: tag}
+			}
+		}
+		if lang == nil {
+			lang = &English
+		}
+		logInfoFunc("[i18n] Not special language, default using %s", lang.Tag.String())
 	}
 	SetDefaultLang(*lang)
 	logInfoFunc("[i18n] InitI18n started")
@@ -339,14 +257,24 @@ func InitI18nWithOptions(lang *Lang, options ...Option) error {
 		logErrorFunc("[i18n] Cannot load any language")
 		panic("[i18n] Cannot load any language")
 	}
+	langBase, _ := lang.Tag.Base()
+	var maybeLang *Lang
 	for _, l := range Languages {
 		//if Language == nil && DefaultLang != nil && DefaultLang.Tag == l.Tag {
 		if lang.Tag == l.Tag {
-			err := UseLanguage(l)
-			if err != nil {
-				return err
-			}
+			maybeLang = l
 			break
+		}
+		lBase, _ := l.Tag.Base()
+		if langBase.String() == lBase.String() {
+			maybeLang = l
+			break
+		}
+	}
+	if maybeLang != nil {
+		err := UseLanguage(maybeLang)
+		if err != nil {
+			return err
 		}
 	}
 	logInfoFunc("[i18n] InitI18n finished")
